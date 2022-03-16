@@ -1,0 +1,3128 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Revamped Validation App</title>
+    <!--  (c) 2016 CA Technologies.  All Rights Reserved. -->
+    <!--  Build Date: Tue Feb 07 2017 18:25:29 GMT-0800 (PST) -->
+    
+    <script type="text/javascript">
+        var APP_BUILD_DATE = "Tue Feb 07 2017 18:25:29 GMT-0800 (PST)";
+        var STORY    = "US569";
+        var BUILDER  = "jmartin";
+        var CHECKSUM = 249723162313;
+    </script>
+    
+    <script type="text/javascript" src="/apps/2.1/sdk.js"></script>
+
+    <script type="text/javascript">
+        Rally.onReady(function() {
+             
+/**
+ * A link that pops up a version dialog box
+ */
+
+Ext.define('Rally.technicalservices.InfoLink',{
+    extend: 'Rally.ui.dialog.Dialog',
+    alias: 'widget.tsinfolink',
+    
+    /**
+     * @cfg {String} informationHtml
+     * Additional text to be displayed on the popup dialog (for exmaple,
+     * to add a description of the app's use or functionality)
+     */
+    informationHtml: null,
+    
+    /**
+     * 
+     * cfg {String} title
+     * The title for the dialog box
+     */
+    title: "Build Information",
+    
+    defaults: { padding: 5, margin: 5 },
+
+    closable: true,
+     
+    draggable: true,
+
+    autoShow: true,
+   
+    width: 350,
+    
+    informationalConfig: null,
+    
+    items: [{xtype:'container', itemId:'information' }],
+    
+    initComponent: function() {
+        var id = Ext.id(this);
+        this.title =  "<span class='icon-help'> </span>" + this.title;
+        this.callParent(arguments);
+    },
+    
+    _generateChecksum: function(string){
+        var chk = 0x12345678,
+            i;
+        string = string.replace(/var CHECKSUM = .*;/,"");
+        string = string.replace(/var BUILDER  = .*;/,"");
+        string = string.replace(/\s/g,"");  //Remove all whitespace from the string.
+       
+        for (i = 0; i < string.length; i++) {
+            chk += (string.charCodeAt(i) * i);
+        }
+   
+        return chk;
+    },
+    
+    _checkChecksum: function(container) {
+        var deferred = Ext.create('Deft.Deferred');
+        var me = this;
+        
+        Ext.Ajax.request({
+            url: document.URL,
+            params: {
+                id: 1
+            },
+            success: function (response) {
+                text = response.responseText;
+                if ( CHECKSUM ) {
+                    var stored_checksum = me._generateChecksum(text);
+                    if ( CHECKSUM !== stored_checksum ) {
+                        deferred.resolve(false);
+                        return;
+                    }
+                }
+                deferred.resolve(true);
+            }
+        });
+        
+        return deferred.promise;
+    },
+    
+    _addToContainer: function(container){
+        var config = Ext.apply({
+            xtype:'container',
+            height: 200,
+            overflowY: true
+        }, this.informationalConfig);
+        
+        container.add(config);
+    },
+    
+    afterRender: function() {
+        var app = Rally.getApp();
+        
+        if ( !Ext.isEmpty( this.informationalConfig ) ) {
+            var container = this.down('#information');
+            this._addToContainer(container);
+            
+        }
+        
+        if (! app.isExternal() ) {
+            this._checkChecksum(app).then({
+                scope: this,
+                success: function(result){
+                    if ( !result ) {
+                        this.addDocked({
+                            xtype:'container',
+                            cls: 'build-info',
+                            dock: 'bottom',
+                            padding: 2,
+                            html:'<span class="icon-warning"> </span>Checksums do not match'
+                        });
+                    }
+                },
+                failure: function(msg){
+                    console.log("oops:",msg);
+                }
+            });
+        } else {
+            this.addDocked({
+                xtype:'container',
+                cls: 'build-info',
+                padding: 2,
+                dock: 'bottom',
+                html:'... Running externally'
+            });
+        }
+        this.callParent(arguments);
+    },
+    
+    beforeRender: function() {
+        var me = this;
+        this.callParent(arguments);
+
+        if (this.informationHtml) {
+            this.addDocked({
+                xtype: 'component',
+                componentCls: 'intro-panel',
+                padding: 2,
+                html: this.informationHtml,
+                doc: 'top'
+            });
+        }
+        
+        this.addDocked({
+            xtype:'container',
+            cls: 'build-info',
+            padding: 2,
+            dock:'bottom',
+            html:"This app was created by the CA AC Technical Services Team."
+        });
+        
+        if ( APP_BUILD_DATE ) {
+            var build_html = Ext.String.format("Built on: {0} <br/>Built by: {1}",
+                APP_BUILD_DATE,
+                BUILDER);
+                
+            if ( STORY ) {
+                build_html = build_html + "<br/>Source story: " + STORY;
+            }
+                
+            this.addDocked({
+                xtype:'container',
+                cls: 'build-info',
+                padding: 2,
+                dock: 'bottom',
+                html: build_html
+            });
+        }
+    }
+});
+
+/*
+ */
+Ext.define('Rally.technicalservices.Logger',{
+    constructor: function(config){
+        Ext.apply(this,config);
+    },
+    log: function(args){
+        var timestamp = "[ " + Ext.util.Format.date(new Date(), "Y-m-d H:i:s.u") + " ]";
+        //var output_args = arguments;
+        //output_args.unshift( [ "[ " + timestamp + " ]" ] );
+        //output_args = Ext.Array.push(output_args,arguments);
+        
+        var output_args = [];
+        output_args = Ext.Array.push(output_args,[timestamp]);
+        output_args = Ext.Array.push(output_args, Ext.Array.slice(arguments,0));
+
+        window.console && console.log.apply(console,output_args);
+    }
+
+});
+
+Ext.define('CA.techservices.validation.BaseRule',{
+    extend: 'Ext.Base',
+    
+    config: {
+        /*
+        * [{Rally.wsapi.data.Model}] portfolioItemTypes the list of PIs available
+        * we're going to use the first level ones (different workspaces name their portfolio item levels differently)
+        */
+        portfolioItemTypes:[],
+        /**
+         * 
+         * @cfg
+         * {String} model The name of a record type that this rule applies to 
+         */
+        model: null,
+        /**
+         * 
+         * @cfg {String} a human-readable label for the chart that will be made from the rule
+         */
+        label: 'No label supplied for this rule'
+    },
+
+    constructor: function(config) {
+        this.mergeConfig(config);
+    },
+    
+    shouldExecuteRule: true,
+    
+    getDescription: function() {
+        console.error('getRuleDescription is not implemented in subclass ', this.self.getName());
+        return null;
+    },
+    
+    getFetchFields: function() {
+        return [];
+    },
+    getLabel: function() {
+        console.error('getLabel is not implemented in subclass ', this.self.getName());
+        return this.label; 
+    },
+    getModel: function() {
+        return this.model;
+    },
+
+    getFilters: function() {
+        console.error('getFilters not implemented in subclass ', this.self.getName());
+        throw 'getFilters not implemented in subclass ' + this.self.getName();
+    },
+    // return false if the record doesn't match
+    // return string if record fails the rule
+    applyRuleToRecord: function(record) {
+        console.error('applyRuleToRecord not implemented in subclass ', this.self.getName());
+        throw 'applyRuleToRecord not implemented in subclass ' + this.self.getName();
+        
+        return record;
+    },
+    
+    /* override to allow the validator to check if the rule makes sense to run 
+     * (e.g., the field checker for fields that don't even exist)
+     * 
+     * resolve promise with text if problem -- the validator will return the text so
+     * it can be put into a description
+     * 
+     * The rule will still be executed unless this.shouldExecuteRule is set to false (and
+     * the rule class implements skipping because of this.shouldExecuteRule).
+     * 
+     * A rule class could be multi-part and only partially fail, so execution or not execution
+     * needs to be handled by the class itself.
+     * 
+     */
+    precheckRule: function() {
+        return null;
+    },
+    
+    getUserFriendlyRuleLabel: function() {        
+        return this.label || this.getLabel();
+    }
+});
+Ext.define('CA.techservices.validation.ActiveDefectLeafProjectRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsdefectactiveleafprojectrule',
+    
+    config: {
+        model: 'Defect',
+        label: 'Active Defect in Non-leaf Project',
+        dayLimit: 30,
+        state: 'Submitted'
+    },
+    
+    getLabel: function() {
+        return Ext.String.format("<strong>{0}</strong>: {1}",
+            this.label,
+            "Defect Release Should be the same as Defect Suite Release (if the DS has a Release)."
+        );
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0}</strong>: {1}",
+            this.label,
+            Ext.String.format("Defects should not stay in the {0} state for more than {1} days.",
+                this.getState(),
+                this.getDayLimit()
+            )
+        );
+    },
+    
+    getState: function() {
+        return this.state || "Submitted";
+    },
+    
+    getDayLimit: function() {
+        return this.dayLimit || 15;
+    },
+    
+    getFetchFields: function() {
+        return ['Name','State','LastUpdateDate'];
+    },
+    
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    
+    applyRuleToRecord: function(record) {
+        if ( record.get('State') == this.getState() ) {
+            var diff = Rally.util.DateTime.getDifference(new Date(),record.get('LastUpdateDate'),'day');
+            if ( diff >= this.getDayLimit() ) {
+                return Ext.String.format("Defect has been in {0} state for {1} days, which is longer than {2} days.",
+                    this.getState(),
+                    this.getDayLimit(),
+                    diff
+                );
+            }
+        }
+            
+        return null;
+    },
+    
+    getFilters: function() {
+        var x_days_ago = Rally.util.DateTime.add(new Date(),'day',-30);
+        
+        return Rally.data.wsapi.Filter.and([
+            {property:'State',operator:'=',value:this.getState()},
+            {property:'LastUpdateDate',operator:'<=',value: Rally.util.DateTime.toIsoString(x_days_ago)}
+        ]);
+    }
+});
+Ext.define('CA.techservices.validation.ArtifactIterationMismatchesReleaseRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsartifactiterationmismatchesreleaserule',
+     
+    config: {
+        model: 'HierarchicalRequirement',
+        label: 'Release Does Not Match Iteration'
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0} ({1})</strong>: {2}",
+            this.label,
+            "If there is an iteration, there should be a release with the same timeframe."
+        );
+    },
+    
+    getFetchFields: function() {
+        return ['Iteration','StartDate','EndDate','Release','ReleaseStartDate','ReleaseDate'];
+    },
+    
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+        if ( Ext.isEmpty(record.get('Iteration')) ) {
+            return null;
+        }
+        
+        if ( Ext.isEmpty(record.get('Release')) ) {
+            return null; // this will be checked via custom list
+        }
+        
+        var iteration = record.get('Iteration');
+        var release = record.get('Release');
+        
+        if ( iteration.EndDate < release.ReleaseStartDate ) {
+            return "Iteration ends before release begins";
+        }
+        
+        if ( iteration.StartDate > release.ReleaseDate ) {
+            return "Iteration starts after release ends";
+        }
+        
+    },
+    
+    getFilters: function() {        
+        // without this filter, the number of items that must be downloaded to evaluate
+        // this check would grow without bound; if a user wants to do a one-time review of
+        // past items where Release and Iteration are mismatched, they should do a manual
+        // review with a custom list
+        var today = Rally.util.DateTime.toIsoString(new Date());
+        return Rally.data.wsapi.Filter.or([
+            {property:'Release.ReleaseDate',operator:'>=',value: today},
+            {property:'Iteration.EndDate',operator:'>=',value: today}
+        ]);
+    },
+    
+    getUserFriendlyRuleLabel: function() {
+        var model_map = { 'HierarchicalRequirement' : 'Story', 'Defect' : 'Defect' };
+        return Ext.String.format("{0} ({1})", this.label, model_map[this.model]);
+    }
+});
+Ext.define('CA.techservices.validation.ArtifactActiveNotInLeafProject',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsartifactactivenotinleafproject',
+    cutoff: '2016-12-01T00:00:00.000Z',
+    
+    config: {
+        model: 'HierarchicalRequirement',
+        label: 'Work Started but Not in Leaf Project'
+    },
+   
+    getDescription: function() {
+        return Ext.String.format("{0} ({1})",
+            this.label,
+            "Items can be in higher-level projects before they're started, but should move to a specific pod once started."
+        );
+    },
+   
+    getFetchFields: function() {
+        return ['FormattedID', 'Parent', 'ScheduleState', 'LastUpdateDate'];
+    },
+   
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+   
+    applyRuleToRecord: function(record) {
+        if (record.get("Project")._ref in this.nonLeafProjectRefs) {
+            if (record.get("ScheduleState") == "In-Progress"  ||
+                record.get("ScheduleState") == "Completed"  ||
+                (record.get("ScheduleState") == "Accepted" &&
+                    Rally.util.DateTime.getDifference(record.get('LastUpdateDate'),new Date(this.cutoff),'hour') > 0)) {
+                return this.getDescription();
+            }
+        }
+        return null;
+    },
+   
+    getFilters: function() {
+        var filters = [];
+        Ext.Array.each(Object.keys(this.nonLeafProjectRefs), function(ref) {
+            filters.push({property:'Project',operator:'=',value:ref});
+        });
+ 
+        return Rally.data.wsapi.Filter.and([
+            Rally.data.wsapi.Filter.or([
+                {property:'ScheduleState',operator:'=',value: 'In-Progress'},
+                {property:'ScheduleState',operator:'=',value: 'Completed'},
+                Rally.data.wsapi.Filter.and([
+                    {property:'ScheduleState',operator:'>=',value: 'Accepted'},
+                    {property:'LastUpdateDate',operator:'>=',value: this.cutoff}
+                ])
+            ]),
+            Rally.data.wsapi.Filter.or(filters)
+        ]);
+    },
+   
+    getUserFriendlyRuleLabel: function() {
+        var model_map = { 'HierarchicalRequirement' : 'Story', 'Defect' : 'Defect' };
+        return Ext.String.format("{0} ({1})", this.label, model_map[this.model]);
+    }
+});
+Ext.define('CA.techservices.validation.ArtifactReleaseNoteButNoProductOrMilestoneRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsartifactreleasenotebutnoproductmilestonerule',
+     
+    config: {
+        model: 'HierarchicalRequirement',
+        label: 'Missing Product or Milestone'
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0} ({1})</strong>: {2}",
+            this.label,
+            "When Release Notes Needed=Yes and Release Notes Complete=No there should be a Milestone or Product."
+        );
+    },
+    
+    getFetchFields: function() {
+        return ['Milestones','c_ReleaseNoteCompleteDocUseOnly','c_ReleaseNoteNeeded','c_Product'];
+    },
+    
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+        if ( !record.get('c_ReleaseNoteNeeded') || record.get('c_ReleaseNoteNeeded') == "No" || ( record.get('c_ReleaseNoteCompleteDocUseOnly')) ) {
+            return null;
+        }
+                
+        if ( ( Ext.isEmpty(record.get('Milestones')) || record.get('Milestones').Count == 0 ) && Ext.isEmpty(record.get('c_Product')) ) {
+            return "Should have either milestone or product if Release Notes Complete = No and Release Notes Needed = Yes.";
+        }
+        
+        return null;
+    },
+    
+    getFilters: function() {        
+        return Rally.data.wsapi.Filter.and([
+            {property:'c_ReleaseNoteNeeded',value:"Yes"},
+            {property:'c_ReleaseNoteCompleteDocUseOnly',value:false}
+        ]);
+    },
+    
+    getUserFriendlyRuleLabel: function() {
+        var model_map = { 'HierarchicalRequirement' : 'Story', 'Defect' : 'Defect' };
+        return Ext.String.format("{0} ({1})", this.label, model_map[this.model]);
+    }
+});
+Ext.define('CA.techservices.validation.DefectAcceptedNotClosed',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsdefectacceptednotclosedrule',
+    
+    config: {
+        model: 'Defect',
+        label: 'Accepted Defect Not Closed'
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0}</strong>: {1}",
+            this.label,
+            "Accepted Defects should additionally be Closed."
+        );
+    },
+    
+    getFetchFields: function() {
+        return ['Name','ScheduleState','State','AcceptedDate'];
+    },
+    
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+        //var missingFields = [];
+
+        //console.log("applyRuleToRecord",record);
+
+        // using fact that the system populates the AcceptedDate... for Accepted and higher ScheduleStates...
+        if (( record.get('AcceptedDate') != null ) && (record.get('State') != "Closed") ) {
+        // if (( record.get('ScheduleState') == "Accepted" ) && (record.get('State') != "Closed") ) {
+            var msg = Ext.String.format("Accepted Defects should additionally be Closed.(SchedState={0}: State={1})",record.get('ScheduleState'),record.get('State'));
+            return msg;   
+        } 
+        return null; // no rule violation
+    },
+    
+    getFilters: function() {        
+        return Rally.data.wsapi.Filter.and([
+            {property:'State',operator:'!=',value:'Closed'},
+            {property:'AcceptedDate',operator:'!=',value:null}
+            //{property:'ScheduleState',operator:'=',value:'Accepted'}
+        ]);
+    }
+});
+Ext.define('CA.techservices.validation.DefectClosedNoResolution',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsdefectclosednoresolutionrule',
+    
+    config: {
+        model: 'Defect',
+        label: 'Closed Defect w/No Resolution'
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0}</strong>: {1}",
+            this.label,
+            "Closed Defects must have a Resolution."
+        );
+    },
+    
+    getFetchFields: function() {
+        return ['Name','State','Resolution'];
+    },
+    
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+        //var missingFields = [];
+
+        //console.log("applyRuleToRecord",record);
+
+        if (( record.get('State') == "Closed" ) && ((record.get('Resolution') == null) || (record.get('Resolution') == "None")))  {
+            var msg = "Closed Defects must have a Resolution.";
+            return msg;   
+        } 
+        return null; // no rule violation
+    },
+    
+    getFilters: function() {        
+        return Rally.data.wsapi.Filter.and([
+            {property:'State',operator:'=',value:"Closed"},
+            {property:'Resolution',operator:'=',value:"None"}
+        ]);
+    }
+});
+Ext.define('CA.techservices.validation.DefectReleaseNotEqDefectSuiteReleaseRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsdefectreleasenoteqdefectsuitereleaserule',
+     
+    config: {
+        model: 'Defect',
+        label: 'Defect Release Not Equal DS Release'
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0}</strong>: {1}",
+            this.label,
+            "Defect Release Should be the same as Defect Suite Release (if the DS has a Release)."
+        );
+    },
+    
+    getFetchFields: function() {
+        return ['Name','DefectSuites','Release'];
+    },
+    
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+
+        // ~~~~~~~~~~ DOES NOT WORK.... ~~~~~~~
+console.log("applyRuleToRecord:", record);
+var defectSuites = record.get('DefectSuites');
+console.log('applyRuleToRecord:DS-', defectSuites);
+if (defectSuites != null){
+    console.log('applyRuleToRecord:DS-', defectSuites[0]);
+}
+return null;
+// ~~~~~~~~~~~~~~~~~~~
+// following does not work ... but SHOULD!!!
+        // the statement below - short-circuits if the defect does not have a release or the defect suite does not have a release.
+        // we have another test that requires that a Defect be linked to at most one defectSuite. A defectSuite may have multiple defects.
+        // return null if the test is not directly violated...
+        if (((record.get('Release') && record.get('DefectSuites').ObjectID)  // defect is scheduled and there IS a defectsuite (ds)
+        && (record.get('DefectSuites')[0].Release))                             // and the ds has been scheduled
+        && ((record.get('Release').Name) == (record.get('DefectSuites')[0].Release.Name))) // check for equivalence in the names
+        {
+            return null; // no rule violation
+        } else {
+            var de_release = "No Release";
+            if (record.get('Release') != null) {
+                de_release = record.get('Release').Name;
+            }
+            var ds_msg = "No Release";
+            if (record.get('DefectSuites')[0].ObjectID && (record.get('DefectSuites')[0].Release != null)) {
+                ds_msg = record.get('DefectSuites')[0].Release.Name;
+            } else {
+                ds_msg = "No Feature at all!";
+            }
+        
+            return Ext.String.format("Defect.Release({0}) != DefectSuite.Release ({1})!",de_release,ds_msg);
+        }        
+    },
+    
+    getFilters: function() {        
+        return Ext.create('Rally.data.wsapi.Filter',{
+            property:'DefectSuites.ObjectID',
+            operator: '!=',
+            value: null
+        });
+        // return Rally.data.wsapi.Filter.and([
+        //     {property:'Feature',operator:'!=',value:null},
+        //     {property:'Name',operator: '!contains', value: "[Unfinished]" }
+        // ]);
+    }
+});
+Ext.define('CA.techservices.validation.DefectTimeInState',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsdefecttimeinstaterule',
+    
+    config: {
+        model: 'Defect',
+        label: null,
+        dayLimit: 30,
+        state: 'Submitted'
+    },
+    
+    getLabel: function() {
+        return Ext.String.format("In {0} for > {1} days",
+            this.getState(),
+            this.getDayLimit()
+        );
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0}</strong>: {1}",
+            this.label,
+            Ext.String.format("Defects should not stay in the {0} state for more than {1} days.",
+                this.getState(),
+                this.getDayLimit()
+            )
+        );
+    },
+    
+    getState: function() {
+        return this.state || "Submitted";
+    },
+    
+    getDayLimit: function() {
+        return this.dayLimit || 15;
+    },
+    
+    getFetchFields: function() {
+        return ['Name','State','LastUpdateDate'];
+    },
+    
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    
+    applyRuleToRecord: function(record) {
+        if ( record.get('State') == this.getState() ) {
+            var diff = Rally.util.DateTime.getDifference(new Date(),record.get('LastUpdateDate'),'day');
+            if ( diff >= this.getDayLimit() ) {
+                return Ext.String.format("Defect has been in {0} state for {1} days, which is longer than {2} days.",
+                    this.getState(),
+                    this.getDayLimit(),
+                    diff
+                );
+            }
+        }
+            
+        return null;
+    },
+    
+    getFilters: function() {
+        var x_days_ago = Rally.util.DateTime.add(new Date(),'day',-30);
+        
+        return Rally.data.wsapi.Filter.and([
+            {property:'State',operator:'=',value:this.getState()},
+            {property:'LastUpdateDate',operator:'<=',value: Rally.util.DateTime.toIsoString(x_days_ago)}
+        ]);
+    }
+});
+Ext.define('CA.techservices.validation.FeatureCurrentReleaseNoCommitmentRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsfeaturecurrentreleasenocommitmentrule',
+    
+    config: {
+        /*
+        * [{Rally.wsapi.data.Model}] portfolioItemTypes the list of PIs available
+        * we're going to use the first level ones (different workspaces name their portfolio item levels differently)
+        */
+        portfolioItemTypes:[],
+        label: 'Feature in current release has no Commitment for Release set' 
+    },
+    getModel:function(){
+        return this.portfolioItemTypes[0];  // 0-feature,1-initiative, etc..
+    },
+    getDescription: function() {
+        var msg = Ext.String.format(
+            "When in current release, {0} must have Commitment for Release set",
+            /[^\/]*$/.exec(this.getModel())
+        );
+        return msg;
+    },
+    
+    getFetchFields: function() {
+        return ['Name','Parent','c_CommitmentforRelease','Release','ReleaseStartDate','ReleaseDate'];
+    },
+    getLabel: function(){
+        this.label = Ext.String.format(
+            "{0} in current release has no Commitment for Release set",
+            /[^\/]*$/.exec(this.getModel())
+        );
+        return this.label;
+    },
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+        var release = record.get('Release');
+
+        if ( !Ext.isEmpty(record.get('c_CommitmentforRelease') ) ){
+            return null;
+        }
+        if ( Ext.isEmpty(release) ) {
+            return null; 
+        }
+
+        var today = Rally.util.DateTime.toIsoString(new Date());
+        if ( today > release.ReleaseDate || today < release.ReleaseStartDate ) {
+            return null;
+        }
+        
+        return this.getDescription();
+    },
+    
+    getFilters: function() {
+        var today = Rally.util.DateTime.toIsoString(new Date());
+
+        return Rally.data.wsapi.Filter.and([
+            {property:'Release.ReleaseStartDate',operator:'<=',value: today},
+            {property:'Release.ReleaseDate',operator:'>=',value: today}
+        ]);
+    }
+});
+Ext.define('CA.techservices.validation.FeatureNoParentRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsfeaturenoparentrule',
+    
+    config: {
+        /*
+        * [{Rally.wsapi.data.Model}] portfolioItemTypes the list of PIs available
+        * we're going to use the first level ones (different workspaces name their portfolio item levels differently)
+        */
+        portfolioItemTypes:[],
+        label: 'Feature needs Parent' 
+    },
+    getModel:function(){
+        return this.portfolioItemTypes[0];  // 0-feature,1-initiative, etc..
+    },
+    getDescription: function() {
+        var msg = Ext.String.format(
+            "{0} must be linked to a {1}",
+            /[^\/]*$/.exec(this.getModel()),
+            this.portfolioItemTypes[1]
+        );
+        return msg;
+    },
+    
+    getFetchFields: function() {
+        return ['Name','Parent'];
+    },
+    getLabel: function(){
+        this.label = Ext.String.format(
+            "{0} without {1}",
+            /[^\/]*$/.exec(this.getModel()), //regex retrieves string after 'PortfolioItem/'
+            /[^\/]*$/.exec(this.portfolioItemTypes[1])
+            );
+        return this.label;
+    },
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+
+        if ( Ext.isEmpty(record.get('Parent') ) ) {
+            return this.getDescription();   
+        } else {
+            return null; // no rule violation
+        }
+    },
+    
+    getFilters: function() {        
+        return Ext.create('Rally.data.wsapi.Filter',{
+            property:'Parent',
+            operator: '=',
+            value: null
+        });
+    }
+});
+Ext.define('CA.techservices.validation.InitiativeNoThemeRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsinitiativenothemerule',
+    
+   
+    config: {
+        /*
+        ** projectPortfolioRoot set in base class and on constructor
+        */
+        projectPortfolioRoot: null,
+        /*
+        * [{Rally.wsapi.data.Model}] portfolioItemTypes the list of PIs available
+        * we're going to use the first level ones (different workspaces name their portfolio item levels differently)
+        */
+        portfolioItemTypes:[],
+        //model: 'PortfolioItem/Initiative',
+        label: 'Initiative needs Parent' 
+    },
+    getModel:function(){
+        return this.portfolioItemTypes[1];  // 0-feature,1-initiative, etc..
+    },
+    getDescription: function() {
+        var msg = Ext.String.format(
+            "{0} must be linked to a {1}",
+            /[^\/]*$/.exec(this.getModel()),
+            this.portfolioItemTypes[2]
+        );
+        return msg;
+    },
+    
+    getFetchFields: function() {
+        return ['Name','Parent'];
+    },
+    getLabel: function(){
+        this.label = Ext.String.format(
+            "{0} without {1}",
+            /[^\/]*$/.exec(this.getModel()), //regex retrieves string after 'PortfolioItem/'
+            /[^\/]*$/.exec(this.portfolioItemTypes[2])
+            );
+        return this.label;
+    },
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+
+        if ( Ext.isEmpty(record.get('Parent') ) ) {
+            return this.getDescription();   
+        } else {
+            return null; // no rule violation
+        }
+    },
+    
+    getFilters: function() {        
+
+        // return Rally.data.wsapi.Filter.and([
+        //     {property:'Parent',operator:'=',value:null}
+        // ]);
+        return [];
+    }
+});
+Ext.define('CA.techservices.validation.InitiativeProjectNotGlobalDevelopmentRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsinitiativeprojectnotglobaldevelopmentrule',
+    
+    // Set Name of the Top-Level container where teams *must* put their Initiatives (and higher)
+    projectPortfolioRoot: null,
+   
+    config: {
+        /*
+        * [{Rally.wsapi.data.Model}] portfolioItemTypes the list of PIs available
+        * we're going to use the first level ones (different workspaces name their portfolio item levels differently)
+        */
+        portfolioItemTypes:[],
+        //model: 'PortfolioItem/Initiative - types loaded in base class.',
+        model: null,
+        label: 'Initiative Wrong Project'
+    },
+    
+    getDescription: function() {
+        console.log("InitiativeWrongProject:",this);
+        
+        var msg = Ext.String.format(
+            "{0} must be saved into *{1}* or a direct child project.",
+            /[^\/]*$/.exec(this.getModel()),
+            this.projectPortfolioRoot
+            );
+        return msg;
+    },
+    
+    getFetchFields: function() {
+        return ['Name','Project','Parent'];
+    },
+    getLabel: function(){
+        this.label = Ext.String.format(
+            "{0} Wrong Project",
+            /[^\/]*$/.exec(this.getModel())
+        );
+        return this.label;
+    },
+    getModel: function(){
+        return this.portfolioItemTypes[1]; // 0:Feature, 1:Initiative, 2:Theme, 3...
+    },
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+        console.log("ApplyRuleToRecord:",record); 
+        //  RULE: Initiative not assigned to �Global Development� or one-level below       
+        if ( record.get('Project').Name == this.projectPortfolioRoot ) {
+            return null; // no rule violation   
+        } else if ((record.get('Project').Parent != null) && (record.get('Project').Parent.Name == this.projectPortfolioRoot)) {
+            return null; // no rule violation (one-level below Global)
+        } else {         // doesn't look like the Initiative is in the right place!
+            return this.getDescription();
+        }
+    },
+    
+    getFilters: function() {        
+
+       // return Rally.data.wsapi.Filter.and([
+       //     {property:'Parent',operator:'=',value:null}
+       // ]);
+       return [];
+    }
+});
+Ext.define('CA.techservices.validation.ArtifactActiveButNoIteration',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsartifactactivenoiterationrule',
+    
+   
+    config: {
+        model: 'HierarchicalRequirement',
+        label: 'No Iteration for Active Item'
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0}</strong>: {1}",
+            this.label,
+            "Active items without an Iteration."
+        );
+    },
+    
+    getFetchFields: function() {
+        return ['Iteration','ScheduleState','AcceptedDate','DirectChildrenCount'];
+    },
+    
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+        if ( record.get('DirectChildrenCount') > 0 ) {
+            return null;
+        }
+        
+        if ( !Ext.isEmpty(record.get('Iteration')) ) {
+            return null;
+        }
+        
+        if ( record.get('AcceptedDate') ) {
+            return Ext.String.format("An accepted {0} must be assigned to an Iteration.",
+                this.getNoun()
+            );
+        }
+        
+        if ( Ext.Array.contains(['In-Progress','Completed'], record.get('ScheduleState')) ) {
+            return Ext.String.format("An active {0} must be assigned to an Iteration.  This {1} is in {2}.",
+                this.getNoun(),
+                this.getNoun(),
+                record.get('ScheduleState')
+            );
+        }
+        
+        return null; // no rule violation
+    },
+    
+    getNoun: function() {
+        var model_map = { 'HierarchicalRequirement' : 'Story', 'Defect' : 'Defect' };
+        return model_map[this.model];
+    },
+    
+    getUserFriendlyRuleLabel: function() {
+        return Ext.String.format("{0} ({1})", this.label, this.getNoun());
+    },
+    
+    getFilters: function() {        
+        var filters = [
+            {property:'Iteration',operator: '=', value: null },
+            {property:'ScheduleState',operator:'>',value:'Defined'}
+        ];
+        if ( this.model == "HierarchicalRequirement" ) {
+            filters.push({property:'DirectChildrenCount',value: 0});
+        }
+
+        return Rally.data.wsapi.Filter.and(filters);
+    }
+});
+Ext.define('CA.techservices.validation.StoryCompletedNoActuals',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias: 'widget.tsstorycompletednoactuals',
+    config: {
+        model: 'HierarchicalRequirement',
+        label: 'Completed without Actuals (Story)',
+        completedStates: ['Completed','Accepted']
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0}</strong>: {1}",
+            this.label,
+            "Stories that have reached the Completed state but have nothing in the Actuals field on their tasks."
+        );
+    },
+    
+    getFetchFields: function() {
+        return ['TaskActualTotal','ScheduleState'];
+    },
+    
+    getFilters: function() {
+        return Rally.data.wsapi.Filter.and([
+            {property:'ScheduleState',operator:'>=',value:'Completed'},
+            {property:'TaskActualTotal',operator: '<', value: .0000001 },
+            {property:'DirectChildrenCount',value: 0}
+        ]);
+    },
+    // return false if the record doesn't match
+    // return string if record fails the rule
+    applyRuleToRecord: function(record) {
+        if ( record.get('TaskActualTotal') > 0 || !Ext.Array.contains(this.completedStates, record.get('ScheduleState')) ) {
+            return false; 
+        }
+        return Ext.String.format('Completed but has no Actuals (State:{0})', record.get('ScheduleState'));
+    },
+    
+    getUserFriendlyRuleLabel: function() {        
+        return this.label;
+    }
+});
+Ext.define('CA.techservices.validation.StoryWithDocTagNoDocNameRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsstorywithdoctagnodocnamerule',
+    
+    config: {
+        model: 'HierarchicalRequirement',
+        label: 'Documentation Tag Mismatch'
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0}</strong>: {1}",
+            this.label,
+            "Stories with Documentation tag should be prefixed by DOC:."
+        );
+    },
+    
+    getFetchFields: function() {
+        return ['Name','Tags'];
+    },
+    
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+        var tags = record.get('Tags');
+        if ( Ext.isEmpty(tags) || tags.Count === 0 ) { return null; }
+        
+        var tag_names = tags._tagsNameArray;
+        var has_tag = false; 
+        Ext.Array.each(tag_names, function(tag) {
+            if ( tag.Name == "Documentation" ) {
+                has_tag = true;
+            }
+        });
+        if ( !has_tag ) { return null; }
+        
+        var name = record.get('Name');
+
+        if ( /^DOC:/.test(name) ) { 
+            return null;
+        }
+        return "Has Documentation tag but the name does not begin with DOC:";
+    },
+    
+    getFilters: function() {        
+        return Rally.data.wsapi.Filter.and([
+            {property:'Tags.Name',operator:'contains',value:'Documentation'},
+            {property:'Name',operator: '!contains', value: "DOC:" }
+        ]);
+    }
+});
+Ext.define('CA.techservices.validation.StoryRequiredFieldRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsstoryrequiredfieldrule',
+    
+   
+    config: {
+        model: 'HierarchicalRequirement',
+        requiredFields: [],
+        label: 'Missing Required Fields (Story)'
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0}</strong>: {1}",
+            this.label,
+            "Stories that are missing expected fields."
+        );
+    },
+    
+    getFetchFields: function() {
+        return this.requiredFields;
+    },
+    
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+        var missingFields = [];
+
+        Ext.Array.each(this.requiredFields, function (field_name) {
+            if ( this.isValidField(record, field_name) ) {
+                var value = record.get(field_name);
+                if ( Ext.isEmpty(value) ) {
+                    missingFields.push(record.getField(field_name).displayName);
+                }
+            }
+        },this);
+        if (missingFields.length === 0) {
+            return false;
+        }
+        return Ext.String.format('Fields Missing: {0}', missingFields.join(','))
+    },
+    
+    /* 
+     * override to allow the validator to check if the rule makes sense to run 
+     * 
+     * resolve promise with text if problem
+     * 
+     */
+    precheckRule: function() {
+        var deferred = Ext.create('Deft.Deferred'),
+            me = this;
+                
+        this.requestedRequiredFields = this.requiredFields;
+        
+        if ( Ext.isString(this.model) ) {
+            Rally.data.ModelFactory.getModel({
+                type: this.model,
+                success: function(model) {
+                    var bad_fields = Ext.Array.filter(me.requiredFields, function (field_name) {
+                        return !me.isValidField(model,field_name);
+                    });
+                    
+                    Ext.Array.each(bad_fields, function(field){
+                        Ext.Array.remove(me.requiredFields, field);
+                    });
+                    
+                    var text = null;
+                    if ( bad_fields.length > 0 ) {
+                        text = "Cannot perform Field Validation for Stories for nonexistent fields: " + bad_fields.join(', ');
+                    }
+                    
+                    deferred.resolve(text);
+                },
+                failure: function() {
+                    deferred.reject("Issue prechecking Rule");
+                }
+            });
+        }
+        
+        return deferred.promise;
+    },
+    
+    getFilters: function() {        
+        var filters = Ext.Array.map(this.requiredFields, function(field) {
+            return { property: field, value: "" };
+        });
+        
+        var field_filter = Rally.data.wsapi.Filter.or(filters);
+        var leaf_filter = Ext.create('Rally.data.wsapi.Filter',{property:'DirectChildrenCount',value: 0});
+        
+        return leaf_filter.and(field_filter);
+    }
+});
+Ext.define('CA.techservices.validation.StoryNoFeatureExcludeUnfinishedRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsstorynofeatureexcludeunfinishedrule',
+    
+   
+    config: {
+        model: 'HierarchicalRequirement',
+        label: 'No Feature (Story Excl [Unfinished])'
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0}</strong>: {1}",
+            this.label,
+            "Stories without Features excluding those with [Unfinished] in the Name."
+        );
+    },
+    
+    getFetchFields: function() {
+        return ['Feature','Name'];
+    },
+    
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+        var missingFields = [];
+
+        if ( Ext.isEmpty(record.get('Feature') ) && (!/^\[Unfinished\]/.test(record.get('Name') ) ) ) {
+            var msg = "Stories must have Features unless they have [Unfinished] in the name.";
+            return msg;   
+        }
+        
+        return null; // no rule violation
+    },
+    
+    getFilters: function() {        
+        var today = Rally.util.DateTime.toIsoString(new Date());
+
+        return Rally.data.wsapi.Filter.and([
+            {property:'Feature',operator:'=',value:null},
+            {property:'Name',operator: '!contains', value: "[Unfinished]" }
+        ]);
+    }
+});
+Ext.define('CA.techservices.validation.StoryScheduledNoReleaseExcludeUnfinishedRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsstoryschedulednoreleaseexcludeinactiverule',
+    
+   
+    config: {
+        model: 'HierarchicalRequirement',
+        label: 'No Release (Story Excl Unsched)'
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0}</strong>: {1}",
+            this.label,
+            "Scheduled stories not assigned to a Release, excluding those with [Unfinished] in the Name."
+        );
+    },
+    
+    getFetchFields: function() {
+        return ['Release','Name'];
+    },
+    
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+        //var missingFields = [];
+
+        //console.log("applyRuleToRecord",record);
+
+        if ( Ext.isEmpty(record.get('Release')) &&
+             !/^\[Unfinished\]/.test(record.get('Name')) &&
+             record.get('DirectChildrenCount') < 1 &&
+             record.get('Iteration') != null) {
+            var msg = "Scheduled stories must be assigned to a Release unless they have [Unfinished] in the name.";
+            return msg;   
+        }
+        
+        return null; // no rule violation
+    },
+    
+    getFilters: function() {        
+        return Rally.data.wsapi.Filter.and([
+            {property:'Release',operator:'=',value:null},
+            {property:'Name',operator: '!contains', value: "[Unfinished]" },
+            {property:'DirectChildrenCount',operator: '=', value: 0 },
+            {property:'Iteration',operator:'!=',value:null}           
+        ]);
+    }
+});
+Ext.define('CA.techservices.validation.StoryNoNullPlanEstimateRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsstorynonullplanestimaterule',
+    
+   
+    config: {
+        model: 'HierarchicalRequirement',
+        label: 'Null Plan Estimate (Story)'
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0}</strong>: {1}",
+            this.label,
+            "Stories in a current or past iteration should not be in progress or later and missing a plan estimate."
+        );
+    },
+    
+    getFetchFields: function() {
+        return ['PlanEstimate','Iteration','ScheduleState'];
+    },
+    
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+        var missingFields = [];
+
+        if ( !Ext.isEmpty(record.get('PlanEstimate') ) ) {
+            return null;
+        }
+
+        var today = Rally.util.DateTime.toIsoString(new Date());
+        
+        if ( (record.get('ScheduleState') == "Defined" ||
+              record.get('ScheduleState') == "To Be Defined") &&
+             (Ext.isEmpty(record.get('Iteration') ) ||
+              record.get('Iteration').StartDate > today) ) {
+            // it hasn't been started yet and hasn't been scheduled for the current or past iteration
+            return null;
+        }
+        
+        return Ext.String.format('Has null for plan estimate');
+    },
+    
+    getFilters: function() {        
+        var today = Rally.util.DateTime.toIsoString(new Date());
+
+        return Rally.data.wsapi.Filter.and([
+            {property:'PlanEstimate',operator:'=',value:0},
+            {property:'Iteration.StartDate',operator: '<=', value: today },
+            {property:'ScheduleState',operator: '>', value: 'Defined' }
+        ]);
+    }
+});
+Ext.define('CA.techservices.validation.StoryProductNotEqFeatureProductExcludeUnfinishedRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsstoryproductnoteqfeatureproductexcludeunfinishedrule',
+     
+    config: {
+        model: 'HierarchicalRequirement',
+        label: 'Story Product Not Equal Feature Product (Excl [Unfinished])',
+        story_product_field: 'c_Product',
+        feature_product_field: 'c_Product'
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0}</strong>: {1}",
+            this.label,
+            "Story Product should be the same as its Feature's Product, excluding stories with [Unfinished] in the Name or unscheduled Features."
+        );
+    },
+    
+    getFetchFields: function() {
+        return ['Feature','Name', this.story_product_field, this.feature_product_field];
+    },
+    
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+        // the statement below - short-circuits if the story does not have a release or the feature does not have a release. 
+        if (Ext.isEmpty(record.get('Feature'))) {
+            return null; // either it's a placeholder feature or the story doesn't have a product
+        }
+        
+        console.log('--', record.get('FormattedID'), record.get('Feature')[this.feature_product_field], record.get(this.story_product_field));
+        
+        if ( record.get('Feature')[this.feature_product_field] == record.get(this.story_product_field)) {
+            return null; // no rule violation
+        }
+        
+        if ( Ext.isEmpty(record.get('Feature')[this.feature_product_field]) && Ext.isEmpty(record.get(this.story_product_field)) ) {
+            return null;  // they're both blank
+        }
+        
+        var us_product = record.get(this.story_product_field) || "No Product";
+        var fe_msg = "No Feature Product";
+        if (!Ext.isEmpty( record.get('Feature')[this.feature_product_field] ) ) {
+            fe_msg = record.get('Feature')[this.feature_product_field];
+        }
+    
+        return Ext.String.format("Story Product ({0}) != Feature Product ({1})!",us_product,fe_msg);
+    },
+    
+    getFilters: function() {        
+        var today = Rally.util.DateTime.toIsoString(new Date());
+
+        return Rally.data.wsapi.Filter.and([
+        {property:'Feature',operator:'!=',value:null},
+        {property:'Name',operator: '!contains', value: "[Unfinished]" },
+        // without this filter, the number of stories that must be downloaded to
+        // evaluate this check would grow without bound; if a user wants to do a
+        // one-time review of past stories where Release doesn't match the Feature's
+        // release, they should do a manual review with a custom list
+        {property:'Release.ReleaseDate',operator:'>=',value: today}
+    ]);
+    }
+});
+Ext.define('CA.techservices.validation.StoryReleaseNotEqFeatureReleaseExcludeUnfinishedRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsstoryreleasenoteqfeaturereleaseexcludeunfinishedrule',
+     
+    config: {
+        model: 'HierarchicalRequirement',
+        label: 'Story Release Not Equal Feature Release (Excl [Unfinished])'
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0}</strong>: {1}",
+            this.label,
+            "Story Release should be the same as or earlier than its Feature's Release, excluding stories with [Unfinished] in the Name or unscheduled Features."
+        );
+    },
+    
+    getFetchFields: function() {
+        return ['Feature','Name','Release','ReleaseStartDate'];
+    },
+    
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+        // the statement below - short-circuits if the story does not have a release or the feature does not have a release. 
+        if (record.get('Feature') == null ||
+            record.get('Release') == null) {
+            return null; // either it's a placeholder feature or the story isn't scheduled
+        }
+        if (record.get('Feature').Release &&
+            record.get('Feature').Release.Name == record.get('Release').Name) {
+            return null; // no rule violation
+        }
+        if (record.get('Feature').Release == null ||
+            record.get('Release').ReleaseStartDate < record.get('Feature').Release.ReleaseStartDate) {
+            return null; // accepted story on placeholder or story was advance work for a future feature
+        }
+
+        var us_release = record.get('Release').Name;
+        var fe_msg = "No Release";
+        if (record.get('Feature').Release != null) {
+            fe_msg = record.get('Feature').Release.Name;
+        } else {
+            fe_msg = "No Feature Release";
+        }
+    
+        return Ext.String.format("Story.Release({0}) != Feature.Release ({1})!",us_release,fe_msg);
+    },
+    
+    getFilters: function() {        
+        var today = Rally.util.DateTime.toIsoString(new Date());
+
+        return Rally.data.wsapi.Filter.and([
+        {property:'Feature',operator:'!=',value:null},
+        {property:'Name',operator: '!contains', value: "[Unfinished]" },
+        // without this filter, the number of stories that must be downloaded to
+        // evaluate this check would grow without bound; if a user wants to do a
+        // one-time review of past stories where Release doesn't match the Feature's
+        // release, they should do a manual review with a custom list
+        {property:'Release.ReleaseDate',operator:'>=',value: today}
+    ]);
+    }
+});
+Ext.define('CA.techservices.validation.StoryUnfinishedAcceptedRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsstoryunfinishedacceptedrule',
+    
+    config: {
+        model: 'HierarchicalRequirement',
+        label: '[Unfinished] Story >= Accepted'
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0}</strong>: {1}",
+            this.label,
+            "[Unfinished] Stories should be set to Completed, not Accepted."
+        );
+    },
+    
+    getFetchFields: function() {
+        return ['ScheduleState','Name','DirectChildrenCount','AcceptedDate'];
+    },
+    
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+        //console.log("applyRuleToRecord",record);
+
+        if (( record.get('AcceptedDate') != null ) && (/^\[Unfinished\]/.test(record.get('Name') ) ) && (record.get('DirectChildrenCount') < 1)) {
+            var msg = "[Unfinished] Stories should be set to 'Completed', not 'Accepted'.";
+            return msg;   
+        }
+        return null; // no rule violation
+    },
+    
+    getFilters: function() {        
+        return Rally.data.wsapi.Filter.and([
+            {property:'AcceptedDate',operator:'!=',value: null },
+            {property:'Name',operator: 'contains', value: '[Unfinished]' },
+            {property:'DirectChildrenCount',operator: '<', value: 1 }            
+        ]);
+    }
+});
+Ext.define('CA.techservices.validation.StoryUnfinishedWithFeatureRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsstoryunfinishedwithfeaturerule',
+    
+   
+    config: {
+        model: 'HierarchicalRequirement',
+        label: 'Unfinished Story w Feature'
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0}</strong>: {1}",
+            this.label,
+            "Unfinished Stories should be disconnected from their Features."
+        );
+    },
+    
+    getFetchFields: function() {
+        return ['Feature','Name'];
+    },
+    
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+
+        //console.log('applyRuleToRecord',record);
+
+        if (( record.get('Feature') != null ) && (/^\[Unfinished\]/.test(record.get('Name') ) ) ) {
+            var msg = "Unfinished Stories should be disconnected from their features after splitting.";
+            return msg;   
+        }        
+        return null; // no rule violation
+    },
+    
+    getFilters: function() {        
+        var today = Rally.util.DateTime.toIsoString(new Date());
+
+        return Rally.data.wsapi.Filter.and([
+            {property:'Feature',operator:'!=',value:null},
+            {property:'Name',operator: 'contains', value: "[Unfinished]" }
+        ]);
+    }
+});
+Ext.define('CA.techservices.validation.TaskActiveNoToDoRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias: 'widget.tstaskactivenotodorule',
+    config: {
+        model: 'Task',
+        label: 'Incomplete Task Without ToDo'
+    },
+    
+    getFetchFields: function() {
+        return ['ToDo','State'];
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0}</strong>: {1}",
+            this.label,
+            "Tasks that are not yet complete but don't have hours in the To Do field."
+        );
+    },
+    
+    getFilters: function() {
+        return Rally.data.wsapi.Filter.and([
+            {property:'ToDo',operator: '<', value: .0000001 },
+            {property:'State',operator: '<', value: 'Completed' }
+        ]);
+    },
+    // return false if the record doesn't match
+    // return string if record fails the rule
+    applyRuleToRecord: function(record) {
+        if ( record.get('ToDo') > 0 || record.get('State') == "Completed" ) {
+            return false; 
+        }
+        return Ext.String.format('Is Active But Has No ToDo (State:{0})', record.get('State'));
+    },
+    
+    getUserFriendlyRuleLabel: function() {        
+        return this.label;
+    }
+});
+Ext.define('CA.techservices.validation.TaskCompletedNoActuals',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias: 'widget.tstaskcompletednoactuals',
+    config: {
+        model: 'Task',
+        label: 'Completed Without Actuals (Task)',
+        completedStates: ['Completed']
+    },
+    
+    getFetchFields: function() {
+        return ['Actuals','State'];
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0}</strong>: {1}",
+            this.label,
+            "Tasks that are Completed but do not have any hours in the Actuals field."
+        );
+    },
+    
+    getFilters: function() {
+        return Rally.data.wsapi.Filter.and([
+            {property:'State',operator:'=',value:'Completed'},
+            {property:'Actuals',operator: '<', value: .0000001 }
+        ]);
+    },
+    // return false if the record doesn't match
+    // return string if record fails the rule
+    applyRuleToRecord: function(record) {
+        if ( record.get('Actuals') > 0 || !Ext.Array.contains(this.completedStates, record.get('State')) ) {
+            return false; 
+        }
+        return Ext.String.format('Completed but has no Actuals (State:{0})', record.get('State'));
+    },
+    
+    getUserFriendlyRuleLabel: function() {        
+        return this.label;
+    }
+});
+Ext.define('CA.techservices.validation.TaskRequiredFieldRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tstaskrequiredfieldrule',
+    
+   
+    config: {
+        model: 'Task',
+        requiredFields: [],
+        label: 'Required Fields Are Missing (Task)'
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0}</strong>: {1}",
+            this.label,
+            "Tasks that are missing expected fields."
+        );
+    },
+    
+    getFetchFields: function() {
+        return this.requiredFields;
+    },
+    
+    /* model MUST be a model not just a model name */
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+        var missingFields = [];
+
+        Ext.Array.each(this.requiredFields, function (field_name) {
+            if ( this.isValidField(record, field_name) ) {
+                var value = record.get(field_name);
+                if ( Ext.isEmpty(value) ) {
+                    missingFields.push(record.getField(field_name).displayName);
+                }
+            }
+        },this);
+        if (missingFields.length === 0) {
+            return false;
+        }
+        return Ext.String.format('Fields Missing: {0}', missingFields.join(','))
+    },
+    
+    /* 
+     * override to allow the validator to check if the rule makes sense to run 
+     * 
+     * resolve promise with text if problem
+     * 
+     */
+    precheckRule: function() {
+        var deferred = Ext.create('Deft.Deferred'),
+            me = this;
+                
+        this.requestedRequiredFields = this.requiredFields;
+        
+        if ( Ext.isString(this.model) ) {
+            Rally.data.ModelFactory.getModel({
+                type: this.model,
+                success: function(model) {
+                    var bad_fields = Ext.Array.filter(me.requiredFields, function (field_name) {
+                        return !me.isValidField(model,field_name);
+                    });
+                    
+                    Ext.Array.each(bad_fields, function(field){
+                        Ext.Array.remove(me.requiredFields, field);
+                    });
+                    
+                    var text = null;
+                    if ( bad_fields.length > 0 ) {
+                        text = "Cannot perform Field Validation for Tasks for nonexistent fields: " + bad_fields.join(', ');
+                    }
+                    
+                    deferred.resolve(text);
+                },
+                failure: function() {
+                    deferred.reject("Issue prechecking Rule");
+                }
+            });
+        }
+        
+        return deferred.promise;
+    },
+    
+    getFilters: function() {        
+        var filters = Ext.Array.map(this.requiredFields, function(field) {
+            return { property: field, value: "" };
+        });
+        
+        return Rally.data.wsapi.Filter.or(filters);
+    }
+});
+Ext.define('CA.techservices.validation.TaskTodoNoEstimateRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias: 'widget.tstasktodonoestimaterule',
+    config: {
+        model: 'Task',
+        label: 'Positive ToDo But No Estimate (Task)'
+    },
+    
+    getDescription: function() {
+        return Ext.String.format("<strong>{0}</strong>: {1}",
+            this.label,
+            "Tasks that have hours left in the To Do field but no Estimate."
+        );
+    },
+    
+    getFetchFields: function() {
+        return ['ToDo','Estimate'];
+    },
+    
+    getFilters: function() {
+        return Rally.data.wsapi.Filter.and([
+            {property:'ToDo',operator:'>',value:0},
+            {property:'Estimate',operator: '<', value: .0000001 }
+        ]);
+    },
+    // return false if the record doesn't match
+    // return string if record fails the rule
+    applyRuleToRecord: function(record) {
+        if ( !record.get('ToDo') > 0 || record.get('Estimate') > 0 ) {
+            return false; 
+        }
+        return Ext.String.format('Has ToDo But No Estimate (ToDo:{0})', record.get('ToDo'));
+    },
+    
+    getUserFriendlyRuleLabel: function() {        
+        return this.label;
+    }
+});
+Ext.define('CA.techservices.validation.ThemeProjectNotGlobalDevelopmentRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsthemeprojectnotglobaldevelopmentrule',
+    
+    
+    config: {
+       /* 
+        * [{}] a Target root project for high-levelpassed in from calling routine. 
+        * Retrieves from appSettings 
+        * Set Name of the Top-Level container where teams *must* put their Initiatives (and higher)
+        */
+        projectPortfolioRoot: null,
+       /*
+        * [{Rally.wsapi.data.Model}] portfolioItemTypes the list of PIs available
+        * we're going to use the first level ones (different workspaces name their portfolio item levels differently)
+        */
+        portfolioItemTypes:[],
+        //model: 'PortfolioItem/Theme',
+        label: 'Theme Wrong Project'
+    },
+    
+    getModel: function(){
+        return this.portfolioItemTypes[2]; // 0-feature, 1-initiative
+    },
+    getDescription: function() {
+        var msg = Ext.String.format(
+            "{0} must be saved into *{1}*.",
+            /[^\/]*$/.exec(this.getModel()),
+            this.projectPortfolioRoot
+            );
+        return msg;
+    },
+    
+    getFetchFields: function() {
+        return ['Name','Project'];
+    },
+    
+    getLabel: function(){
+        this.label = Ext.String.format(
+            "{0} Wrong Project",
+            /[^\/]*$/.exec(this.getModel())
+            );
+        return this.label;
+    },
+
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+    
+        if ( record.get('Project').Name != this.projectPortfolioRoot )  {
+            return this.getDescription();   
+        } else {
+            return null; // no rule violation
+        }
+    },
+    
+    getFilters: function() {        
+
+        // getting null error on parent
+        // return Rally.data.wsapi.Filter.and([
+        //     {property:'Parent',operator:'=',value:null}
+        //]);
+        return [];
+       
+    }
+});
+Ext.define('CA.techservices.validation.ThemeProjectNotGlobalDevelopmentRule',{
+    extend: 'CA.techservices.validation.BaseRule',
+    alias:  'widget.tsthemeprojectnotglobaldevelopmentrule',
+    
+    
+    config: {
+       /* 
+        * [{}] a Target root project for high-levelpassed in from calling routine. 
+        * Retrieves from appSettings 
+        * Set Name of the Top-Level container where teams *must* put their Initiatives (and higher)
+        */
+        projectPortfolioRoot: null,
+       /*
+        * [{Rally.wsapi.data.Model}] portfolioItemTypes the list of PIs available
+        * we're going to use the first level ones (different workspaces name their portfolio item levels differently)
+        */
+        portfolioItemTypes:[],
+        //model: 'PortfolioItem/Theme',
+        label: 'Theme Wrong Project'
+    },
+    
+    getModel: function(){
+        return this.portfolioItemTypes[2]; // 0-feature, 1-initiative
+    },
+    getDescription: function() {
+        var msg = Ext.String.format(
+            "{0} must be saved into *{1}*.",
+            /[^\/]*$/.exec(this.getModel()),
+            this.projectPortfolioRoot
+            );
+        return msg;
+    },
+    
+    getFetchFields: function() {
+        return ['Name','Project'];
+    },
+    
+    getLabel: function(){
+        this.label = Ext.String.format(
+            "{0} Wrong Project",
+            /[^\/]*$/.exec(this.getModel())
+            );
+        return this.label;
+    },
+
+    isValidField: function(model, field_name) {
+        var field_defn = model.getField(field_name);
+        return ( !Ext.isEmpty(field_defn) );
+    },
+    
+    applyRuleToRecord: function(record) {
+    
+        if ( record.get('Project').Name != this.projectPortfolioRoot )  {
+            return this.getDescription();   
+        } else {
+            return null; // no rule violation
+        }
+    },
+    
+    getFilters: function() {        
+
+        // getting null error on parent
+        // return Rally.data.wsapi.Filter.and([
+        //     {property:'Parent',operator:'=',value:null}
+        //]);
+        return [];
+       
+    }
+});
+Ext.define('CA.techservices.validator.Validator',{
+    alias: 'widget.tsvalidator',
+    
+    
+    /**
+     * 
+     * [{rule}] An array of validation rules
+     */
+    rules: [],
+    
+    recordsByModel: {},
+    
+    categoryField: 'Project',
+    
+    // fields that all rules should fetch
+    fetchFields: [],
+    /**
+     * 
+     * a hash containing events for a data point e.g.,
+     * 
+     * points will include a field called _records holding the associated records
+     * and each record will have a field called __ruleText holding a statement about
+     * its violation
+     * 
+     *     {
+     *          click: function() {
+     *          me.showDrillDown(this._records,this._name);
+     *      }
+     */
+    pointEvents: null,
+    /**
+     * 
+     * a hash of filters by model type.  Filter will be ANDed to the filters we get from the validation rules 
+     * (which are themselves ORed together).
+     */
+    baseFilters: null,
+    
+    constructor: function(config) {
+        Ext.apply(this,config);
+
+        //console.log("validator-constructor",this,config,config.rules.length);        
+        
+        var rules = [];
+        
+        Ext.Array.each(config.rules, function(rule){
+            var name = rule.xtype;
+
+            if ( !Ext.isEmpty(name) ) {
+                var new_rule = Ext.clone(rule);
+                delete new_rule.xtype;
+                console.log("initializing " + name);
+                rules.push(Ext.createByAlias('widget.' + name, new_rule));
+            }
+        });
+        
+        this.rules = rules;
+    },
+    
+    getRuleDescriptions: function() {
+        var text = "<ul>";
+        
+        Ext.Array.each(this.rules, function(rule){
+            var rule_description = rule.getDescription() || "";
+            if ( !Ext.isEmpty(rule_description) ) {
+                text = text + "<li>" + rule_description + "</li>";
+            }
+        });
+        text = text + "</ul>";
+        
+        return text;
+    },
+    
+    getFiltersByModel: function() {
+        var me = this,
+            filters_by_model = {};
+             
+        Ext.Array.each(this.rules, function(rule){
+            var model = rule.getModel();
+            var filters = rule.getFilters();
+
+            if ( !Ext.isEmpty(model) && !Ext.isEmpty(filters) ) {
+                
+                console.log("GetFiltersByModel",filters.toString(),rule.xtype);
+
+                if ( Ext.isEmpty(filters_by_model[model]) ) {
+                    filters_by_model[model] = [];
+                }
+                filters_by_model[model].push(filters);
+            }
+        });
+        
+        Ext.Object.each(filters_by_model, function(model, filters){
+            filters = Ext.Array.unique( Ext.Array.flatten(filters) );
+            filters_by_model[model] = Rally.data.wsapi.Filter.or(filters);
+            
+            if ( me.baseFilters && me.baseFilters != {} && me.baseFilters[model] != {} ) {
+                filters_by_model[model] = filters_by_model[model].and(me.baseFilters[model]);
+            }
+        });
+        
+        return filters_by_model;
+    },
+    
+    getFetchFieldsByModel: function() {
+        var me = this,
+            fields_by_model = {};
+            
+        Ext.Array.each(this.rules, function(rule){
+            var model = rule.getModel();
+            var fields = rule.getFetchFields();
+
+            if ( !Ext.isEmpty(model) && !Ext.isEmpty(fields) && fields.length > 0 ) {
+                if ( Ext.isEmpty(fields_by_model[model]) ) {
+                    fields_by_model[model] = [me.categoryField,'Name'];
+                }
+                fields_by_model[model].push(fields);
+            }
+        });
+        
+        Ext.Object.each(fields_by_model, function(model, fields){
+            fields = Ext.Array.flatten(fields);
+            fields = Ext.Array.push(fields, me.fetchFields);
+            
+            fields_by_model[model] = Ext.Array.unique(fields);
+        });
+        
+        return fields_by_model;
+    },
+    
+    // returns a promise, promise fulfilled by hash of results by model type
+    gatherData: function() {
+
+        var deferred = Ext.create('Deft.Deferred'),
+            me = this;
+                
+        var fetch_by_model = this.getFetchFieldsByModel();
+        var filters_by_model = this.getFiltersByModel();
+        
+        var promises = [];
+        Ext.Object.each(fetch_by_model, function(model, fetch){
+            var config = {
+                model: model,
+                fetch: fetch,
+                limit: Infinity,
+                filters: filters_by_model[model]
+            };
+            
+            promise = function() {
+                return this._loadWsapiRecords(config);
+            };
+            promises.push(promise);
+        },this);
+        
+        Deft.Chain.sequence(promises,this).then({
+            success: function(results) {
+                me.recordsByModel = {};
+                Ext.Array.each(results, function(result) {
+                    me.recordsByModel = Ext.apply(me.recordsByModel, result);
+                });
+                deferred.resolve(results);
+            },
+            failure: function(msg) {
+                deferred.reject(msg);
+            }
+        });
+        return deferred.promise;
+    },
+    
+    getChartData: function() {
+        if ( this.recordsByModel == {} ) {
+            console.log('No search results');
+            return {};
+        }
+        
+        var categories = this.getCategories();
+        var series = this.getSeries(categories);
+        
+        var chartData = { series: series, categories: categories };
+        this.trimEmptyCategoriesFromChartData(chartData);
+        return chartData;        
+    },
+    
+    getCategories: function() {
+        var me = this,
+            records = Ext.Array.flatten(Ext.Object.getValues(this.recordsByModel));
+        
+        var category_field = this.categoryField;
+        
+        var possible_categories = Ext.Array.map(records, function(record) {
+            return me.getCategoryFromRecord(record,category_field);
+        });
+        
+        return Ext.Array.unique(possible_categories);
+    },
+    
+    getCategoryFromRecord: function(record,category_field) {
+        if ( Ext.isEmpty(record.get(category_field)) ) { return ""; }
+        if ( Ext.isString(record.get(category_field)) ) { return record.get(category_field); }
+        return record.get(category_field)._refObjectName;
+    },
+    
+    getSeries: function(categories) {
+        var me = this,
+            category_field = me.categoryField,
+            series = [];
+            
+        // one series per rule, one stack per model type
+        Ext.Array.each(this.rules, function(rule){
+            var series_name = rule.getUserFriendlyRuleLabel();
+            var model = rule.getModel();
+            var records = me.recordsByModel[model];
+            
+            var failed_records = me.getFailedRecordsForRule(records, rule);
+
+            var records_by_category = me.getRecordsByCategory(failed_records, categories, category_field);
+            
+            var data = [];
+            Ext.Array.each(categories, function(category){
+                var category_records = records_by_category[category] || [];
+                
+                var count = category_records.length;
+                var datum = { 
+                    y: count,
+                    _records: category_records,
+                    _name: series_name
+                };
+                
+                if ( !Ext.isEmpty(me.pointEvents) ) {
+                    datum.events = me.pointEvents
+                }
+                data.push(datum);
+            });
+            series.push({
+                name: series_name,
+                
+                records: failed_records,
+                data: data,
+                stack: model
+            });
+        });
+        
+        return series;
+    },
+    
+    
+    trimEmptyCategoriesFromChartData: function(chartData) {
+        var categories = chartData.categories;
+        var allSeries = chartData.series;
+ 
+        var populatedCategories = [];
+        for (var i=0; i<categories.length; i++) {
+            populatedCategories[i] = false;
+        }
+ 
+        var result = Ext.each (allSeries, function(series) {
+            var data = series.data;
+            if (data.length !== populatedCategories.length) {
+                console.log("data length doesn't match categories length");
+                return false;
+            }
+            for (var i=0; i<data.length; i++) {
+                if (data[i].y > 0) {
+                    populatedCategories[i] = true;
+                }
+            }
+ 
+        });
+        if (result === true) {
+            for (var i=populatedCategories.length-1; i>=0; i--) {
+                if (!populatedCategories[i]) {
+                    Ext.Array.erase(categories, i, 1);
+                    var result = Ext.each (allSeries, function(series) {
+                        Ext.Array.erase(series.data, i, 1);
+                    });
+                }
+            }
+        }
+ 
+    },
+     
+    getFailedRecordsForRule: function(records, rule) {
+        var failed_records = [];
+        Ext.Array.each(records, function(record) {
+            var failure = rule.applyRuleToRecord(record);
+            if ( failure ) {
+                var texts = record.get('__ruleText') || [];
+                texts.push(failure);
+                record.set('__ruleText', texts);
+                failed_records.push(record);
+            }
+        });
+        
+        return failed_records;
+    },
+    
+    getRecordsByCategory: function(records, categories, category_field) {
+        var me = this,
+            record_hash = {};
+            
+        Ext.Array.each(records, function(record){
+            var category = me.getCategoryFromRecord(record,category_field);
+            if ( Ext.isEmpty(record_hash[category]) ) {
+                record_hash[category] = [];
+            }
+            record_hash[category].push(record);
+        });
+        
+        return record_hash;
+    },
+    
+    getPrecheckResults: function() {    
+        var promises = Ext.Array.map(this.rules, function(rule){
+            return function() {
+                return rule.precheckRule();
+            };
+        });
+        
+        if ( promises.length === 0 ) {
+            return null;
+        }
+        
+        return Deft.Chain.sequence(promises);
+    },
+    _loadWsapiRecords: function(config){
+        var deferred = Ext.create('Deft.Deferred');
+        var me = this;
+        var default_config = {
+            compact: false,   // Awesome technique to get project.parent.project.name!!! 
+            model: 'Defect',
+            fetch: ['ObjectID']
+        };
+        Ext.create('Rally.data.wsapi.Store', Ext.Object.merge(default_config,config)).load({
+            callback : function(records, operation, successful) {
+                if (successful){
+                    var result = {};
+                    result[config.model] = records;
+                    deferred.resolve(result);
+                } else {
+                    deferred.reject('Problem loading: ' + operation.error.errors.join('. '));
+                }
+            }
+        });
+        return deferred.promise;
+    }
+});
+Ext.define("TSValidationApp", {
+    extend: 'Rally.app.App',
+    componentCls: 'app',
+    logger: new Rally.technicalservices.Logger(),
+    defaults: { margin: 10 },
+    
+    MAX_LIMITS:{CATEGORIES: 30},
+
+    items: [
+        { //filter box
+            xtype:'container',
+            itemId:'filters_box',
+            layout: {
+                type: 'hbox',
+                columnWidth: '100%'
+            }
+        },    // end of filter box
+
+        { // main chart display  
+            xtype:'container',
+            itemId:'display_box'
+        }
+    ], // end of app containers
+
+    integrationHeaders : {
+        name : "TSValidationApp"
+    },
+    getSettingsFields: function() {
+         return [
+         {  
+            name: 'rootPortfolioProject',
+            xtype: 'rallytextfield',
+            fieldLabel: 'Name of root Portfolio Item project:'
+         },
+         { 
+            name: 'showSchedulable',
+            xtype: 'rallycheckboxfield',
+            boxLabelAlign: 'after',
+            fieldLabel: '',
+            margin: '0 0 25 200',
+            boxLabel: 'Show only schedulable artifacts: User Stories, Defects and Tasks.'
+         },
+         {
+             name: 'showNewGlobal',
+             xtype: 'rallycheckboxfield',
+             boxLabelAlign: 'after',
+             fieldLabel: '',
+             margin: '0 0 25 200',
+             boxLabel: 'Show only the new set of global (non-team-specific) checks.'
+          }
+         ];
+    },
+    config: {
+        defaultSettings: {
+            rootPortfolioProject: 'Global Development',
+            showSchedulable: false            
+        }
+    },
+    rulesByType: {
+        NewGlobal: [
+            {xtype:'tsartifactactivenotinleafproject', model:'HierarchicalRequirement'},
+            {xtype:'tsartifactactivenotinleafproject', model:'Defect'}
+        ],
+        PortfolioItemTimeboxNo: [         
+            {xtype:'tsinitiativenothemerule'},
+            {xtype:'tsfeaturenoparentrule'},
+            {xtype:'tsfeaturecurrentreleasenocommitmentrule'},
+            {xtype:'tsthemeprojectnotglobaldevelopmentrule'},
+            {xtype:'tsinitiativeprojectnotglobaldevelopmentrule'}
+        ],
+        // PortfolioItemTimeboxYes: [ // Features into Releases
+        // ],
+        HierarchicalRequirement: [
+            //{xtype:'tsstoryrequiredfieldrule', requiredFields: ['Owner','Description']},
+ 
+            // these are checked via list
+            //{xtype:'tsstorynofeatureexcludeunfinishedrule' },
+            //{xtype:'tsstoryunfinishedwithfeaturerule' },   
+            //{xtype:'tsstoryschedulednoreleaseexcludeinactiverule' },
+            //{xtype:'tsstorynonullplanestimaterule' },
+            //{xtype:'tsartifactactivenoiterationrule', model: 'HierarchicalRequirement' },
+ 
+            {xtype:'tsstoryreleasenoteqfeaturereleaseexcludeunfinishedrule'},
+            {xtype:'tsartifactiterationmismatchesreleaserule',model:'HierarchicalRequirement'},
+            {xtype:'tsartifactreleasenotebutnoproductmilestonerule',model:'HierarchicalRequirement'},
+            {xtype:'tsstoryproductnoteqfeatureproductexcludeunfinishedrule'}
+ 
+            //{xtype:'tsstoryunfinishedacceptedrule'}
+        ],
+        Defect: [
+            // these are checked via list
+            //{xtype:'tsdefectclosednoresolutionrule'},
+            //{xtype:'tsdefectacceptednotclosedrule'},
+ 
+            {xtype:'tsartifactiterationmismatchesreleaserule',model:'Defect'},
+            {xtype:'tsartifactreleasenotebutnoproductmilestonerule',model:'Defect'},
+ 
+            // these are checked via list
+            //{xtype:'tsdefecttimeinstaterule',state:'Untriaged',dayLimit:30},
+            //{xtype:'tsartifactactivenoiterationrule', model: 'Defect' }
+ 
+            //{xtype:'tsdefectreleasenoteqdefectsuitereleaserule'}
+        ],
+        Task: [
+            //{xtype:'tstaskrequiredfieldrule',  requiredFields: ['Owner']},
+            {xtype:'tstasktodonoestimaterule'}
+          //  {xtype:'tstaskactivenotodorule'}
+        ]
+    },                   
+    launch: function() {
+        //this.logger.log("launch:", this);
+        //setup the page
+        this._doLayout();
+
+        Deft.promise.Chain.parallel([
+            this._fetchNonLeafProjectRefs,
+            // get any data model customizations ... then get the data and render the chart
+            this._fetchPortfolioItemTypes], this).then({
+              success: this._initializeApp,
+              failure: this._showErrorMsg,
+              scope: this
+            });           
+    },
+
+    showDrillDown: function(records, title) {
+        var me = this;
+
+        var store = Ext.create('Rally.data.custom.Store', {
+            data: records,
+            pageSize: 2000
+        });
+        
+        Ext.create('Rally.ui.dialog.Dialog', {
+            id        : 'detailPopup',
+            title     : title,
+            width     : 500,
+            height    : 400,
+            closable  : true,
+            layout    : 'border',
+            items     : [
+            {
+                xtype                : 'rallygrid',
+                region               : 'center',
+                layout               : 'fit',
+                sortableColumns      : true,
+                showRowActionsColumn : false,
+                showPagingToolbar    : false,
+                columnCfgs           : [
+                    {
+                        dataIndex : 'FormattedID',
+                        text: "id",
+                        renderer: function(value,meta,record){
+                            return Ext.String.format("<a href='{0}' target='_top'>{1}</a>",Rally.nav.Manager.getDetailUrl(record.get('_ref')),value);
+                        }
+                    },
+                    {
+                        dataIndex : 'Name',
+                        text: "Name",
+                        flex: 1
+                    },
+                    {
+                        dataIndex: '__ruleText',
+                        text: 'Violations',
+                        flex: 2,
+                        renderer: function(value, meta, record) {
+                            if ( Ext.isEmpty(value) ) { return ""; }
+                            var display_value = "";
+                            Ext.Array.each(value, function(violation){
+                                display_value = display_value + Ext.String.format("<li>{0}</li>", violation);
+                            });
+
+                            return Ext.String.format("<ul>{0}</ul>", display_value);
+                        }
+                    }
+                ],
+                store : store
+            }]
+        }).show();
+    },
+    _initializeApp: function(params){
+        var nonLeafProjectRefs = params[0];
+        var portfolioItemTypes = params[1];
+ 
+        var me = this;
+       
+        //me.logger.log('InitializeApp',portfolioItemTypes);
+
+        // add the array of portfolioItem Type names to each portfolio rule as we instantiate it
+        // also grab appSetting for a target folder to hold high-level portfolio items
+        Ext.Array.each(me.rulesByType.PortfolioItemTimeboxNo, function(rule){
+            // get the collection of workspace specific portfolio item names per level
+            rule.portfolioItemTypes = portfolioItemTypes;
+            // for rules that need to have a specific project folder for portfolio items
+            rule.projectPortfolioRoot = me.getSetting('rootPortfolioProject');
+        });
+        
+        Ext.Array.each(me.rulesByType.PortfolioItemTimeboxYes, function(rule){
+            // get the collection of workspace specific portfolio item names per level
+            rule.portfolioItemTypes = portfolioItemTypes;
+            // for rules that need to have a specific project folder for portfolio items
+            rule.projectPortfolioRoot = me.getSetting('rootPortfolioProject');
+        });
+        
+        Ext.Array.each(me.rulesByType.NewGlobal, function(rule){
+            // get the collection of workspace specific portfolio item names per level
+            rule.portfolioItemTypes = portfolioItemTypes;
+            rule.nonLeafProjectRefs = nonLeafProjectRefs;
+            // for rules that need to have a specific project folder for portfolio items
+            rule.projectPortfolioRoot = me.getSetting('rootPortfolioProject');
+        });
+        
+        // add the array to the app as well.
+        me.portfolioItemTypes = portfolioItemTypes;
+
+        me._loadData();
+    },
+    _showErrorMsg: function(msg){
+        Rally.ui.notify.Notifier.showError({message:msg});
+    },
+    _fetchPortfolioItemTypes: function(){
+        var deferred = Ext.create('Deft.Deferred');
+        Ext.create('Rally.data.wsapi.Store',{
+            model: 'typedefinition',
+            fetch:['TypePath','Ordinal'],
+            filters: [{property:'TypePath',operator:'contains',value:'PortfolioItem/'}],
+            sorters: [{property:'Ordinal',direction:'ASC'}]
+        }).load({
+            callback: function(records,operation){
+                if (operation.wasSuccessful()){
+                    var portfolioItemArray = [];
+                    Ext.Array.each(records,function(rec){
+                        portfolioItemArray.push(rec.get('TypePath'));
+                    });
+                    deferred.resolve(portfolioItemArray);
+                } else {
+                    var message = 'failed to load Portfolio Item Types ' + (operation.error && operation.error.errors.join(','));
+                    deferred.reject(message);
+                }
+            }
+        })
+        
+        return deferred;
+    },
+    _fetchNonLeafProjectRefs: function(){
+        var deferred = Ext.create('Deft.Deferred');
+        Ext.create('Rally.data.wsapi.Store',{
+            model: 'Project',
+            filters: [
+                {property:'Parent',operator:'!=',value:null},
+                {property:'State',operator:'=',value:'Open'}
+            ],
+            fetch:['Parent']
+        }).load({
+            callback: function(records,operation){
+                if (operation.wasSuccessful()){
+                    var parentProjectRefs = {};
+                    Ext.Array.each(records,function(rec){
+                        var parent = rec.get("Parent");
+                        if (typeof parent === "object") {
+                            parentProjectRefs[parent._ref] = 1;
+                        }
+                    });
+                    deferred.resolve(parentProjectRefs);
+                } else {
+                    var message = 'failed to load Projects ' + (operation.error && operation.error.errors.join(','));
+                    deferred.reject(message);
+                }
+            }
+        })
+       
+        return deferred;
+    },
+
+    _doLayout: function(){
+        var me = this;
+        // add checkbox panel to select rules
+        this.down('#filters_box').add([
+            {
+                xtype: 'panel',
+                title: 'Rule(s)',
+                itemId: 'selectRulesPanel',
+                layout:{
+                    type: 'hbox',
+                    align: 'left'
+                },
+                height: 80,
+            },
+        ]);
+        if (!this.getSetting('showSchedulable')){
+            // update the filters-box title (no selection offered)
+            this.down('#selectRulesPanel').setTitle('Rule');
+
+            // only show high-level portfolio rules
+            this.down('#selectRulesPanel').add([
+                {
+                    xtype: 'rallycheckboxfield',
+                    columnWidth: '25%',
+                    margin: 10,
+                    labelSeparator: " ",
+                    boxLabel: 'Portfolio',
+                    boxLabelAlign: 'after',
+                    name: 'portfolioRules',
+                    itemId: 'portfolioRuleCheckBox',
+                    stateful: true,
+                    stateId: 'portfolioRuleCheckBox',
+                    stateEvents: ['change'],
+                    //disabled: true,
+                    readOnly: true, // a little nicer display than disabled.
+                    value: true
+                },
+            ]);
+        } else {
+            // update the selectRulesPanel title ('Select Rules')
+            this.down('#selectRulesPanel').setTitle('Select Rules to Display');
+
+
+            // show Stories/Defects/Tasks (no Feature Rules so far)
+            this.down('#selectRulesPanel').add([
+                {
+                    xtype: 'rallycheckboxfield',
+                    columnWidth: '25%',
+                    margin: 10,
+                    boxLabel: 'User Story',
+                    boxLabelAlign: 'after',
+                    name: 'storyRules',
+                    itemId: 'storyRuleCheckBox',
+                    stateful: true,
+                    stateId: 'userStoryRuleCheckBox',
+                    stateEvents: ['change'],
+                    value: true
+                },
+                {
+                    xtype: 'rallycheckboxfield',
+                    columnWidth: '25%',
+                    margin: 10,
+                    boxLabel: 'Defect',
+                    boxLabelAlign: 'after',
+                    name: 'defectRules',
+                    itemId: 'defectRuleCheckBox',
+                    stateful: true,
+                    stateId: 'defectRuleCheckBox',
+                    stateEvents: ['change'],
+                    value: true
+                },    
+                {
+                    xtype: 'rallycheckboxfield',
+                    columnWidth: '25%',
+                    margin: 10,   
+                    boxLabel: 'Task',
+                    boxLabelAlign: 'after',
+                    name: 'taskRules',
+                    itemId: 'taskRuleCheckBox',
+                    stateful: true,
+                    stateId: 'taskRuleCheckBox',
+                    stateEvents: ['change'],
+                    value: true
+                }
+            ]);
+            // add the spacer panel after the rule-selector panel
+//            this.down('#filters_box').add([
+//                {
+//                    xtype: 'panel',
+//                    //title: 'Spacer',
+//                    width: 10,
+//                    height: 80,
+//                    border: 0
+//                },
+//                {
+//                    xtype: 'panel',
+//                    title: 'Select Timeboxes',
+//                    itemId: 'selectTimeboxes',
+//                    height: 80,                
+//                    layout:{type:'hbox',align:'right'},
+//                    items:[
+//                        {
+//                        xtype: 'rallyiterationcombobox',
+//                        itemId: 'iterationSelector',
+//                        allowNoEntry: true,
+//                        defaultToCurrentTimebox: true,  // client use-case: easier clean-up for sprint
+//                        autoSelectCurrentItem: true,    // should have defaulted
+//                        //defaultSelectionPosition: 'first',
+//                        stateful: true,
+//                        stateId: 'iterationSelectorState',
+//                        stateEvents: ['change','select','setvalue'],
+//                        margin: 10,        
+//                        fieldLabel: 'Iteration',
+//                        labelAlign: 'right',
+//                        width: 340
+//                        },
+//                        {   
+//                        xtype: 'rallyreleasecombobox',
+//                        itemId: 'releaseSelector',
+//                        defaultToCurrentTimebox: true,
+//                        autoSelectCurrentItem: true,    // should have defaulted
+//                        //defaultSelectionPosition: 'first',
+//                        stateful: true,
+//                        stateId: 'releaseSelectorState',
+//                        stateEvents: ['change','select','setvalue'],
+//                        allowNoEntry: true, 
+//                        margin: 10,
+//                        fieldLabel: 'Release',
+//                        labelAlign: 'right',
+//                        width: 340,                        
+//                        }] 
+//                }, // end of the TimeBox Selectors
+//                {
+//                    xtype: 'panel',
+//                    height: 80,
+//                    width: '30%',
+//                    border: 0,
+//                    layout:{type:'hbox',align: 'right',margin: 10},
+//                    items:[
+//                        {
+//                            xtype: 'rallybutton',
+//                            scope: me,
+//                            margin: '40 0 0 10', //top right bottom left
+//                            text: 'Apply Selections',
+//                            handler: function() {
+//                                //Ext.Msg.alert('Button', 'You clicked me');
+//                                console.log("In the button:",
+//                                    this.getSetting('showSchedulable'),
+//                                    this.getSetting('rootPortfolioProject')
+//                                );
+//                                me._loadData();    
+//                            }
+//                        }
+//                    ]
+//                }
+//            ]);
+        }
+    },
+    
+    _loadData: function(){
+        this.validator = this._instantiateValidator();
+        
+        this.validator.getPrecheckResults().then({
+            scope: this,
+            success: function(issues) {
+                
+                var messages = Ext.Array.filter(issues, function(issue){
+                    return !Ext.isEmpty(issue);
+                });
+                
+                if ( messages.length > 0 ) {
+                    var append_text = "<br/><b>Precheck Issues:</b><br/><ul>";
+                    Ext.Array.each(messages, function(message){
+                        append_text += '<li>' + message + '</li>';
+                    });
+                    append_text += "</ul>";
+                    
+                    this.logger.log(append_text);
+                }
+                
+                this._updateData();
+            },
+            failure: function(msg) {
+                Ext.Msg.alert('Problem with precheck', msg);
+            }
+        });
+    },
+
+    _updateData: function() {
+        var me = this;
+        this.setLoading("Loading data...");
+        
+        Deft.Chain.pipeline([
+            function() { 
+                me.setLoading("Gathering data...");
+                return me.validator.gatherData(); 
+            },
+            function() { 
+                me.setLoading("Analyzing data...");
+                return me.validator.getChartData(); 
+            }
+        ]).then({
+            scope: this,
+            success: function(results) {
+                
+                if ( results.categories && results.categories.length === 0 ) {
+                    // if no results - erase the underlying, previously rendered chart
+                    this.down('#display_box').removeAll();
+                    Ext.Msg.alert('','No violations found with current selections.');
+                    return;
+                }
+                
+                this.display_rows = Ext.Object.getValues( this.validator.recordsByModel );
+
+                this._makeChart(results);  
+            },
+            failure: function(msg) {
+                Ext.Msg.alert('Problem loading data', msg);
+            }
+        }).always(function() { me.setLoading(false); });    
+    }, 
+    
+    _instantiateValidator: function() {
+        var me = this;
+
+        var rules = [];
+        
+
+        // ************************
+        // Initiatives and Higher are not schedule-able.
+        if ( me.getSetting('showSchedulable')) {
+
+            //this.getSetting('showSchedulable')
+                // ** we don't have any Feature Rules so far ***
+                //if ( me.down('#portfolioRuleCheckBox').value) {
+                //    rules = Ext.Array.push(rules, me.rulesByType['PortfolioItemTimeboxYes']);
+                //}    
+            
+            if ( me.down('#storyRuleCheckBox').value ) {
+                rules = Ext.Array.push(rules, me.rulesByType['HierarchicalRequirement']);
+            }
+            if ( me.down('#defectRuleCheckBox').value ) {
+                rules = Ext.Array.push(rules, me.rulesByType['Defect']);
+            }
+            if ( me.down('#taskRuleCheckBox').value ) {
+                rules = Ext.Array.push(rules, me.rulesByType['Task']);
+            }
+        } else if ( me.getSetting('showNewGlobal')) {
+            rules = Ext.Array.push(rules, me.rulesByType['NewGlobal']);
+        } else { // only show high level Portfolio Item rules
+            if ( me.down('#portfolioRuleCheckBox').value) {
+                rules = Ext.Array.push(rules, me.rulesByType['PortfolioItemTimeboxNo']);
+            }
+        } // end of rulesByType filtering
+
+        // create two different versions ... one for Timebox filtered, one without
+        var validator = {};
+        
+        if (this.getSetting('showSchedulable')){
+            // setup base timebox filters
+//            var story_base_timebox_filter = Rally.data.wsapi.Filter.and([
+//                {property:'Iteration', operator: '=', value: me.down('#iterationSelector').value },
+//                {property:'Release', operator: '=', value: me.down('#releaseSelector').value}
+//                ]);
+//            var defect_base_timebox_filter = Rally.data.wsapi.Filter.and([
+//                {property:'Iteration', operator: '=', value: me.down('#iterationSelector').value },
+//                {property:'Release', operator: '=', value: me.down('#releaseSelector').value}
+//                ]);    
+//            var task_base_timebox_filter = Rally.data.wsapi.Filter.and([
+//                {property:'Iteration', operator: '=', value: me.down('#iterationSelector').value },
+//                {property:'Release', operator: '=', value: me.down('#releaseSelector').value}
+//                ]); 
+
+            var basefilter = Rally.data.wsapi.Filter.and([{property:'ObjectID',operator:'>',value:'0'}]);
+            // create the validator object 
+            validator = Ext.create('CA.techservices.validator.Validator',{
+                rules: rules,
+                fetchFields: ['FormattedID','ObjectID'],
+                // get any settings from the timebox selectors
+                baseFilters:{ 
+                    HierarchicalRequirement: basefilter, //story_base_timebox_filter,
+                    Defect: basefilter, // defect_base_timebox_filter,
+                    Task: basefilter, // task_base_timebox_filter
+                },
+                pointEvents: {
+                    click: function() {
+                        me.showDrillDown(this._records,this._name);
+                    }
+                }
+            });
+        } else if (this.getSetting('showNewGlobal')){
+            validator = Ext.create('CA.techservices.validator.Validator',{
+                rules: rules,
+                fetchFields: ['FormattedID','ObjectID'],
+                // get any settings from the timebox selectors
+                // baseFilters:{
+                //     PortfolioItemTimeboxNo:{},
+                //     PortfolioItemTimeboxYes:{},
+                //      HierarchicalRequirement: {},
+                //     Defect: {},
+                //     Task: {}
+                // },
+                pointEvents: {
+                    click: function() {
+                    me.showDrillDown(this._records,this._name);
+                    }
+                }
+            });
+        } else {
+            validator = Ext.create('CA.techservices.validator.Validator',{
+                rules: rules,
+                fetchFields: ['FormattedID','ObjectID'],
+                // get any settings from the timebox selectors
+                // baseFilters:{ 
+                //     PortfolioItemTimeboxNo:{},
+                //     PortfolioItemTimeboxYes:{},
+                //      HierarchicalRequirement: {},
+                //     Defect: {},
+                //     Task: {}
+                // },
+                pointEvents: {
+                    click: function() {
+                    me.showDrillDown(this._records,this._name);
+                    }
+                }
+            });
+        }
+
+        return validator;        
+    },
+
+    _makeChart: function(data) {
+        // data is the collection of series and categories (projects)
+        this.logger.log('_makeChart', data);
+
+        //  var colors = CA.apps.charts.Colors.getConsistentBarColors();
+        
+        // destroy any existing version of the chart before creating a new one
+        this.down('#display_box').removeAll();
+
+        this.logger.log('_makeChart Project Count Test: ',this.MAX_LIMITS.CATEGORIES,data.categories.length);
+
+        if (!this.getSetting('showNewGlobal')  &&
+            data.categories.length > this.MAX_LIMITS.CATEGORIES){
+            // if there are too many projects in scope (i.e. categories) the chart is unreadable.
+            var msg = Ext.String.format ("You've selected a project too high in the project hierarchy. With {0} ",data.categories.length);
+            msg += "[child] projects in scope, the chart will be unusable. Please select a project ";
+            msg += "further down the project hierarchy.";
+
+            Ext.Msg.alert('Too Many Projects In Selection',msg);
+            return;
+        } else {
+            // Go ahead and create the new chart.
+            this.down("#display_box").add({
+                chartData: data,
+                xtype:'rallychart',
+                itemId: 'validationChart',
+                loadMask: false,
+                chartConfig: this._getChartConfig(data)  //,
+                //    chartColors: colors
+            });
+        }
+    },
+
+    _getChartConfig: function(data) {
+
+        var title_prefix = "";
+        if ( this.down('#portfolioRuleCheckBox') ) {
+            if (title_prefix.length > 0){
+                title_prefix += ", ";
+            }
+            title_prefix = "Portfolio";
+        }
+        if ( this.down('#storyRuleCheckBox') ) {
+            if (title_prefix.length > 0){
+                title_prefix += ", ";
+            }
+            title_prefix += "Story";
+        }
+        // if the last item, use 'and' as separator, else use a comma
+        if ( this.down('#defectRuleCheckBox') ) {
+            if ((title_prefix.length > 0) && ( this.down('#taskRuleCheckBox')))  {
+                title_prefix += ", ";
+            } else {
+                title_prefix += ' and ';
+            }
+            title_prefix += "Defect";
+        }            
+           
+        // should be last item
+        if ( this.down('#taskRuleCheckBox') ) {
+            if (title_prefix.length > 0){
+                title_prefix += " and ";
+            }
+            title_prefix += "Task";
+        }
+        
+        return {
+            chart: { type:'column' },
+            title: { text: title_prefix + ' Validation Results' },
+            xAxis: this._rotateProjectLabels(data.categories.length),
+            yAxis: { 
+                min: 0,
+                title: { text: 'Count' }
+            },
+            tooltip: {
+                positioner: function (w,h,point) {
+                    return { x: point.plotX, y: point.plotY -  10 };
+                }
+            },
+            plotOptions: {
+                column: {
+                    stacking: 'normal'
+                }
+            }
+        }
+    },
+    
+    _loadAStoreWithAPromise: function(model_name, model_fields){
+        var deferred = Ext.create('Deft.Deferred');
+        var me = this;
+        this.logger.log("Starting load:",model_name,model_fields);
+          
+        Ext.create('Rally.data.wsapi.Store', {
+            model: model_name,
+            fetch: model_fields
+        }).load({
+            callback : function(records, operation, successful) {
+                if (successful){
+                    deferred.resolve(this);
+                } else {
+                    me.logger.log("Failed: ", operation);
+                    deferred.reject('Problem loading: ' + operation.error.errors.join('. '));
+                }
+            }
+        });
+        return deferred.promise;
+    },
+    
+    _displayGrid: function(store,field_names){
+        this.down('#display_box').add({
+            xtype: 'rallygrid',
+            store: store,
+            columnCfgs: field_names
+        });
+    },
+    
+    getOptions: function() {
+        return [
+            {
+                text: 'About...',
+                handler: this._launchInfo,
+                scope: this
+            }
+        ];
+    },
+    
+    _launchInfo: function() {
+        if ( this.about_dialog ) { this.about_dialog.destroy(); }
+        this.about_dialog = Ext.create('Rally.technicalservices.InfoLink',{});
+    },
+    _rotateProjectLabels: function(project_count){
+        this.logger.log("_rotateProjectLabels: ",project_count);
+        // horizontal labels for up to 5 items
+        if (project_count <= 10) {
+            return {labels:{rotation:0}};
+        } else if (project_count <= 20){
+            return {labels:{rotation:45}};
+        } else { // full vertical rotation for more than 10 items (good for up-to about 20)
+            return {labels:{rotation:90}};
+        }
+    },
+
+    isExternal: function(){
+        return typeof(this.getAppId()) == 'undefined';
+    }
+    
+});
+            
+               Rally.launchApp('TSValidationApp', {
+                   name: 'Revamped Validation App'
+               });
+        });
+    </script>
+    
+    <style type="text/css">
+
+.app {
+}
+.tsinfolink {
+    position:absolute;
+    right:0px;
+    width: 14px;
+    height: 14px;
+    border-radius: 7px;
+    text-align: center;
+    color: white;
+    background: #C0C0C0;
+    border-style: solid;
+    border-width: 1px;
+    margin-top: 25px;
+    margin-right: 5px;
+    cursor: pointer;
+}
+    </style>
+
+</head>
+<body></body>
+</html>
